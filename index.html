@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数轴动态演示器-高性能版</title>
+    <script src="https://metis-online.fbcontent.cn/metis-misc/zgLDUdmazTYc0B4K6Cor.js"></script>
+    <script src="https://metis-online.fbcontent.cn/metis-misc/zZZY40t7WJC7UdQCPACm.js"></script>
+    <style>
+        :root { --primary: #FF5600; --bg: #F4F3EC; }
+        body { background: var(--bg); font-family: system-ui, -apple-system, sans-serif; margin: 0; overflow: hidden; }
+        
+        /* 数轴区域 */
+        .canvas-area { position: relative; height: 450px; width: 100%; cursor: grab; overflow: hidden; touch-action: none; }
+        .canvas-area:active { cursor: grabbing; }
+        
+        .axis-line { position: absolute; top: 250px; width: 100%; height: 3px; background: #333; z-index: 1; }
+        #viewport { position: absolute; width: 100%; height: 100%; will-change: transform; }
+
+        /* 刻度样式 */
+        .tick { position: absolute; top: 240px; width: 1px; height: 20px; background: #666; }
+        .tick.major { width: 2px; height: 40px; top: 230px; background: #000; }
+        .tick-label { position: absolute; top: 45px; transform: translateX(-50%); font-size: 13px; font-weight: bold; color: #333; user-select: none; }
+
+        /* 气泡标签还原 */
+        .marker { position: absolute; top: 220px; width: 4px; height: 60px; background: var(--primary); z-index: 10; border-radius: 2px; }
+        .marker-label {
+            position: absolute; top: -55px; transform: translateX(-50%);
+            background: #FFB088; color: white; padding: 8px 20px; border-radius: 30px;
+            font-size: 18px; font-weight: bold; white-space: nowrap;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 6px;
+        }
+        .marker-label::after {
+            content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+            border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 8px solid #FFB088;
+        }
+
+        /* 比较线段 */
+        .comp-line { position: absolute; top: 290px; height: 6px; background: rgba(255, 86, 0, 0.2); border-radius: 3px; }
+        .comp-symbol { position: absolute; top: 278px; font-size: 28px; color: var(--primary); font-weight: 900; transform: translateX(-50%); }
+
+        /* 侧边栏 */
+        .sidebar { width: 300px; background: white; border-right: 1px solid #ddd; padding: 24px; z-index: 100; box-shadow: 4px 0 15px rgba(0,0,0,0.05); }
+        .card { background: #f9f9f9; border-radius: 12px; padding: 16px; margin-bottom: 20px; border: 1px solid #eee; }
+        .btn { background: var(--primary); color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; transition: 0.2s; }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        input { width: 100%; border: 1px solid #ddd; padding: 8px; border-radius: 6px; margin-bottom: 10px; box-sizing: border-box; }
+        
+        .scene-btn { background: white; border: 1px solid #eee; padding: 12px; border-radius: 12px; width: 100%; text-align: left; margin-bottom: 8px; cursor: pointer; }
+        .scene-btn:hover { border-color: var(--primary); background: #fffaf8; }
+    </style>
+</head>
+<body class="flex h-screen">
+
+    <aside class="sidebar flex flex-col">
+        <div class="flex items-center gap-2 mb-8">
+            <div style="background: var(--primary); width: 32px; height: 32px; border-radius: 8px;"></div>
+            <h2 style="margin:0; font-size: 20px;">数轴演示</h2>
+        </div>
+
+        <div class="card">
+            <div style="font-size: 12px; color: #999; margin-bottom: 10px; font-weight: bold;">数值标注</div>
+            <input type="number" id="singleVal" placeholder="输入数值">
+            <button class="btn" onclick="addSingle()">标注到数轴</button>
+        </div>
+
+        <div class="card">
+            <div style="font-size: 12px; color: #999; margin-bottom: 10px; font-weight: bold;">比较大小</div>
+            <div class="flex gap-2">
+                <input type="number" id="valA" placeholder="数 A">
+                <input type="number" id="valB" placeholder="数 B">
+            </div>
+            <button class="btn" onclick="runCompare()">开始比较</button>
+        </div>
+
+        <div style="font-size: 12px; color: #999; margin-bottom: 10px; font-weight: bold;">教学场景</div>
+        <button class="scene-btn" onclick="loadScene('temp')">
+            <b style="color: #e67e22;">🌡️ 温度对比</b><br>
+            <small style="color: #999;">北京(-5) vs 上海(10)</small>
+        </button>
+        <button class="scene-btn" onclick="loadScene('alt')">
+            <b style="color: #2980b9;">🏔️ 海拔高度</b><br>
+            <small style="color: #999;">珠峰(8848) vs 海沟(-11034)</small>
+        </button>
+
+        <button style="margin-top: auto; background: none; border: 1px solid #ddd; padding: 8px; border-radius: 6px; cursor: pointer;" onclick="resetAll()">重置视图</button>
+    </aside>
+
+    <main class="flex-1 relative">
+        <div id="result" style="position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); font-size: 60px; font-weight: 900; color: var(--primary); font-style: italic; pointer-events: none; z-index: 50;"></div>
+        
+        <div class="canvas-area" id="dragArea">
+            <div class="axis-line"></div>
+            <div id="viewport">
+                <div id="ticksLayer"></div>
+                <div id="compLayer"></div>
+                <div id="markerLayer"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const state = {
+            offsetX: window.innerWidth / 2 - 150,
+            unitWidth: 60,
+            markers: []
+        };
+
+        // 核心优化：动态计算刻度间距
+        function getTickStep(unitWidth) {
+            const minSpacing = 60; // 刻度之间最小像素间距
+            const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+            for (let s of steps) {
+                if (s * unitWidth >= minSpacing) return s;
+            }
+            return 20000;
+        }
+
+        function render() {
+            document.getElementById('viewport').style.transform = `translateX(${state.offsetX}px)`;
+            
+            // 渲染刻度
+            const step = getTickStep(state.unitWidth);
+            const viewW = document.getElementById('dragArea').clientWidth;
+            const startVal = Math.floor((-state.offsetX) / state.unitWidth / step) * step - step;
+            const endVal = Math.ceil((viewW - state.offsetX) / state.unitWidth / step) * step + step;
+
+            let html = '';
+            for (let v = startVal; v <= endVal; v += step) {
+                const x = v * state.unitWidth;
+                html += `<div class="tick major" style="left:${x}px"><div class="tick-label">${v}</div></div>`;
+                // 绘制中间的细小刻度（仅当间距足够大时）
+                if (state.unitWidth * step > 150) {
+                    const subStep = step / 5;
+                    for(let j=1; j<5; j++) {
+                        html += `<div class="tick" style="left:${x + j*subStep*state.unitWidth}px"></div>`;
+                    }
+                }
+            }
+            document.getElementById('ticksLayer').innerHTML = html;
+
+            // 更新标记位置
+            state.markers.forEach(m => {
+                const el = document.getElementById(m.id);
+                if(el) el.style.left = (m.val * state.unitWidth) + 'px';
+            });
+
+            // 更新比较线
+            updateCompLine();
+        }
+
+        function updateCompLine() {
+            const a = parseFloat(document.getElementById('valA').value);
+            const b = parseFloat(document.getElementById('valB').value);
+            const layer = document.getElementById('compLayer');
+            if (isNaN(a) || isNaN(b) || state.markers.length < 2) { layer.innerHTML = ''; return; }
+
+            const x1 = Math.min(a, b) * state.unitWidth;
+            const x2 = Math.max(a, b) * state.unitWidth;
+            const symbol = a > b ? '>' : (a < b ? '<' : '=');
+            layer.innerHTML = `
+                <div class="comp-line" style="left:${x1}px; width:${x2-x1}px"></div>
+                <div class="comp-symbol" style="left:${(x1+x2)/2}px">${symbol}</div>
+            `;
+        }
+
+        // 交互逻辑
+        let isDragging = false, startX = 0;
+        const dragArea = document.getElementById('dragArea');
+
+        dragArea.onmousedown = e => { isDragging = true; startX = e.clientX - state.offsetX; };
+        window.onmousemove = e => { if(isDragging) { state.offsetX = e.clientX - startX; render(); } };
+        window.onmouseup = () => isDragging = false;
+
+        dragArea.onwheel = e => {
+            e.preventDefault();
+            const rect = dragArea.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const valAtMouse = (mouseX - state.offsetX) / state.unitWidth;
+            const factor = e.deltaY > 0 ? 0.8 : 1.2;
+            state.unitWidth = Math.max(0.005, Math.min(state.unitWidth * factor, 2000));
+            state.offsetX = mouseX - valAtMouse * state.unitWidth;
+            render();
+        };
+
+        // 功能函数
+        function addMarker(val, label) {
+            const id = 'm-' + Math.random().toString(36).substr(2,9);
+            const html = `<div class="marker" id="${id}"><div class="marker-label">${label}</div></div>`;
+            document.getElementById('markerLayer').insertAdjacentHTML('beforeend', html);
+            state.markers.push({id, val});
+        }
+
+        function addSingle() {
+            const v = parseFloat(document.getElementById('singleVal').value);
+            if(isNaN(v)) return;
+            addMarker(v, `数值: ${v}`);
+            focusTo(v);
+        }
+
+        function runCompare() {
+            const a = parseFloat(document.getElementById('valA').value);
+            const b = parseFloat(document.getElementById('valB').value);
+            if(isNaN(a) || isNaN(b)) return;
+            
+            document.getElementById('markerLayer').innerHTML = '';
+            state.markers = [];
+            
+            if(a === -5 && b === 10) {
+                addMarker(-5, "北京: -5℃ ❄️"); addMarker(10, "上海: 10℃ ☀️");
+            } else if(a === 8848 && b === -11034) {
+                addMarker(8848, "珠峰: 8848m 🏔️"); addMarker(-11034, "海沟: -11034m 🌊");
+            } else {
+                addMarker(a, `数 A: ${a}`); addMarker(b, `数 B: ${b}`);
+            }
+
+            const s = a > b ? '>' : (a < b ? '<' : '=');
+            document.getElementById('result').innerText = `${a} ${s} ${b}`;
+            focusTo((a+b)/2);
+        }
+
+        function focusTo(val) {
+            const targetX = dragArea.clientWidth/2 - val * state.unitWidth;
+            anime({
+                targets: state, offsetX: targetX,
+                duration: 800, easing: 'easeOutQuart', update: render
+            });
+        }
+
+        function loadScene(type) {
+            if(type === 'temp') {
+                document.getElementById('valA').value = -5;
+                document.getElementById('valB').value = 10;
+                state.unitWidth = 40;
+            } else {
+                document.getElementById('valA').value = 8848;
+                document.getElementById('valB').value = -11034;
+                state.unitWidth = 0.03; // 关键：针对大气泡调整缩放
+            }
+            runCompare();
+        }
+
+        function resetAll() {
+            state.unitWidth = 60;
+            state.offsetX = dragArea.clientWidth / 2;
+            state.markers = [];
+            document.getElementById('markerLayer').innerHTML = '';
+            document.getElementById('compLayer').innerHTML = '';
+            document.getElementById('result').innerText = '';
+            render();
+        }
+
+        window.onresize = render;
+        render();
+    </script>
+</body>
+</html>
